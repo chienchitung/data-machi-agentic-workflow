@@ -1,29 +1,93 @@
 ---
-title: "Day 21｜為什麼 LangChain AgentExecutor 開始不夠用了？"
+title: "Day 21｜AgentExecutor 為何不夠用？三大控制難題"
 sidebarTitle: "Day 21｜AgentExecutor 限制"
-description: "理解黑箱 Agent loop 在企業流程中的控制難題。"
+description: "理解 AgentExecutor 在企業場景的三大限制：流程順序、Agent 交接與人工介入，以及程式層級流程控制為何不可或缺。"
 ---
 
-早期 Agent 常使用 AgentExecutor：把問題、對話與工具交給模型，讓模型反覆決定要呼叫工具還是輸出答案。這種方式容易上手，但當流程變複雜時，控制力會逐漸不足。
+在 AI Agent 的早期探索階段，LangChain 的 `AgentExecutor` 是許多開發者的第一個起點。你只需要把問題、對話紀錄與工具清單交給模型，它就會自動在「決定呼叫工具」與「輸出最終答案」之間反覆循環，直到任務完成。這種方式確實讓人快速體驗到 Agent 的魅力，但當流程逐漸複雜、進入真實企業環境時，`AgentExecutor` 的邊界也開始浮現。
 
-## 黑箱循環的三個問題
+## 什麼是 AgentExecutor？
 
-第一，開發者常只能透過 Prompt 要求模型遵守順序。第二，Agent A 查完後交給 Agent B 審核、失敗再退回等流程不容易表達。第三，在寄信、刪除或更新資料前，要暫停等待人工批准也較困難。
+<Steps>
+  <Step title="接收使用者輸入">
+    將使用者問題、工具描述與對話歷史整合成 Prompt，送入 LLM。
+  </Step>
+  <Step title="模型決策">
+    LLM 判斷應該呼叫哪個工具，或直接輸出最終答案。
+  </Step>
+  <Step title="工具執行">
+    若模型選擇工具，AgentExecutor 執行並將結果附加回對話。
+  </Step>
+  <Step title="反覆循環">
+    工具結果回到模型，繼續下一輪判斷，直到模型輸出答案或達到迭代上限。
+  </Step>
+</Steps>
 
-## 為什麼企業特別在意？
+## 黑箱循環的三個核心問題
 
-企業流程有明確責任、權限與稽核要求。系統不能只因模型「覺得可以」就跳過必要步驟。高風險操作需要程式層級的條件與中斷點。
+<CardGroup cols={1}>
+  <Card title="問題一：流程順序只能靠 Prompt 約束" icon="message-exclamation">
+    若需要模型先查資料庫、再彙整文件、最後格式化輸出，你只能在 Prompt 寫「請先做 A，再做 B」。但 LLM 無法保證嚴格遵守順序。
 
-## Data Machi 的演進
+    ```text
+    Prompt 約束：請先查 Sheets，再查 Confluence
+    程式約束：step1 → step2 → step3，每步完成才進下一步
+    ```
+  </Card>
 
-Data Machi 早期依賴 AgentExecutor，後來逐步遷移到 LangGraph StateGraph。這不是單純更換框架，而是把部分控制權從 Prompt 移回程式。
+  <Card title="問題二：多 Agent 交接難以表達" icon="arrow-right-arrow-left">
+    企業常見「Agent A 整理資料、Agent B 審核、失敗則退回 A」的流程。這種帶條件分支與回退的拓撲，很難用單一 ReAct 循環自然表達。
+  </Card>
 
-## 踩坑筆記
+  <Card title="問題三：人工暫停點難以實作" icon="hand">
+    寄出郵件、刪除文件或更新關鍵資料前，通常需要人工確認。AgentExecutor 沒有內建的暫停、等待批准與恢復機制。
+  </Card>
+</CardGroup>
 
-簡單問答不一定需要 LangGraph。若只有少量工具與短流程，單一 Agent 可能已足夠。架構應隨問題複雜度成長，而不是一開始就追求最華麗的圖。
+## 為什麼企業特別在意可控性？
+
+<Warning>
+  企業環境中，未經授權的操作可能導致資料遺失、錯誤通知、財務紀錄被覆蓋，甚至違反合規規定。模型「覺得可以做」，和系統「被授權允許做」是兩件不同的事。
+</Warning>
+
+企業核心要求包括：
+
+- 每個動作有明確觸發條件與責任
+- 不同角色有清楚權限邊界
+- 高風險操作留下稽核紀錄
+- 相同輸入產生可預期流程路徑
+
+## Data Machi 的演進歷程
+
+Data Machi 早期同樣依賴 `AgentExecutor`。對於「查一個問題、呼叫一個工具、返回答案」的簡單場景，它運作順暢。但隨著需要同時查詢多個系統、根據結果決定下一步、在關鍵節點等待確認，黑箱循環的摩擦愈來愈明顯。
+
+最終核心流程遷移到 LangGraph 的 `StateGraph`，把流程控制權從 Prompt 約束移回程式邏輯。
+
+<Accordion title="AgentExecutor 與 LangGraph 比較">
+  | 維度 | AgentExecutor | LangGraph StateGraph |
+  | --- | --- | --- |
+  | 流程控制 | LLM 透過 Prompt 決定 | Node 與 Edge 明確定義 |
+  | 條件分支 | 模型自行判斷 | 程式層條件 Edge |
+  | 狀態保存 | 線性對話歷史 | 可自訂結構化 State |
+  | 人工介入 | 需額外 Hack | 支援 interrupt/resume |
+  | 除錯 | 決策藏在模型內 | 每個節點可單獨測試 |
+</Accordion>
+
+## 踩坑筆記：別過早抽象
+
+<Note>
+  簡單問答不一定需要 LangGraph。如果只有少量工具、流程單向且沒有複雜分支，AgentExecutor 或簡單 chain 可能仍是最快解法。架構應隨問題複雜度與風險成長。
+</Note>
+
+需要遷移到更可控架構的訊號包括：
+
+- Prompt 裡開始出現大量「必須先 X 再 Y」
+- Agent 常跳過必要步驟，只能靠更多 Prompt 修補
+- 流程中需要等待外部確認
+- 需要記錄每一步狀態以供稽核
 
 <Info>
   今天只要記住一件事：當流程風險與複雜度提高，企業需要的不只是聰明模型，而是可預期的控制。
 </Info>
 
-下一篇，我們會用 State、Node 與 Edge 認識 LangGraph。
+下一篇，我們會用 State、Node 與 Edge 三個概念正式進入 LangGraph。
