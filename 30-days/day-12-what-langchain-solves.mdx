@@ -1,0 +1,29 @@
+---
+title: "Day 12｜LangChain 到底在解決什麼問題？"
+sidebarTitle: "Day 12｜認識 LangChain"
+description: "用非技術方式理解 LangChain 如何整合模型、提示詞與工具。"
+---
+
+LangChain 常被誤解成一個「讓 AI 變聰明」的框架。更準確地說，它提供一套標準方式，把模型、Prompt、Tool、訊息與輸出處理串在一起。
+
+如果沒有框架，開發者需要自己處理每一家模型 API、工具輸入格式、對話訊息與錯誤。LangChain 把這些常見元件抽象化，讓工具可以被模型識別，也讓不同模型更容易替換。
+
+## 它像什麼？
+
+LangChain 比較像企業系統中的轉接層。Google Sheets、Trello、Confluence 使用不同 API，但包裝成 Tool 後，Coordinator 可以用相近方式呼叫它們。
+
+## LangChain 不負責什麼？
+
+它不會自動替你定義正確流程，也不保證模型一定選對工具。業務邏輯、資料品質、安全邊界與回答驗證，仍然需要開發者設計。
+
+Data Machi 使用 LangChain 的訊息結構、Tool 裝飾器與 Gemini 整合，再透過 LangGraph 管理更明確的執行循環。
+
+## 踩坑筆記
+
+不要從框架出發設計產品。先確認工作問題，再判斷哪些地方需要模型、工具或確定性程式。框架是實作手段，不是產品價值本身。
+
+<Info>
+  今天只要記住一件事：LangChain 是整合 AI 元件的工具箱，不是自動生成企業 Agent 的魔法。
+</Info>
+
+下一篇，我們會看 Data Machi 如何讓 AI 讀懂 Google Sheets。

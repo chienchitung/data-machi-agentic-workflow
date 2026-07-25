@@ -1,0 +1,29 @@
+---
+title: "Day 21｜為什麼 LangChain AgentExecutor 開始不夠用了？"
+sidebarTitle: "Day 21｜AgentExecutor 限制"
+description: "理解黑箱 Agent loop 在企業流程中的控制難題。"
+---
+
+早期 Agent 常使用 AgentExecutor：把問題、對話與工具交給模型，讓模型反覆決定要呼叫工具還是輸出答案。這種方式容易上手，但當流程變複雜時，控制力會逐漸不足。
+
+## 黑箱循環的三個問題
+
+第一，開發者常只能透過 Prompt 要求模型遵守順序。第二，Agent A 查完後交給 Agent B 審核、失敗再退回等流程不容易表達。第三，在寄信、刪除或更新資料前，要暫停等待人工批准也較困難。
+
+## 為什麼企業特別在意？
+
+企業流程有明確責任、權限與稽核要求。系統不能只因模型「覺得可以」就跳過必要步驟。高風險操作需要程式層級的條件與中斷點。
+
+## Data Machi 的演進
+
+Data Machi 早期依賴 AgentExecutor，後來逐步遷移到 LangGraph StateGraph。這不是單純更換框架，而是把部分控制權從 Prompt 移回程式。
+
+## 踩坑筆記
+
+簡單問答不一定需要 LangGraph。若只有少量工具與短流程，單一 Agent 可能已足夠。架構應隨問題複雜度成長，而不是一開始就追求最華麗的圖。
+
+<Info>
+  今天只要記住一件事：當流程風險與複雜度提高，企業需要的不只是聰明模型，而是可預期的控制。
+</Info>
+
+下一篇，我們會用 State、Node 與 Edge 認識 LangGraph。
