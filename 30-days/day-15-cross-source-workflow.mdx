@@ -1,31 +1,134 @@
 ---
-title: "Day 15｜一個問題需要查三個系統：跨資料來源工作流怎麼設計？"
+title: "Day 15｜一個問題查三個系統：跨來源 Agent 工作流的設計邏輯與 Coordinator 執行策略"
 sidebarTitle: "Day 15｜跨來源工作流"
-description: "用完整案例理解多工具如何合作回答企業問題。"
+description: "同一個問題可能同時需要查 Google Sheets 取精確數字、到 Confluence 找類別的正式定義、在 Trello 確認相關改善專案的最新進度狀態。Coordinator 如何分解子任務、決定查詢順序、整合三個來源並在回答中標注出處，是跨系統設計核心。"
 ---
 
-假設主管問：「今年需求工單增加在哪些類別？這些類別的定義是什麼？改善專案目前進度如何？」這不是單一搜尋可以完成的問題。
+前幾天我們分別認識了 Google Sheets 工具、Confluence 搜尋和 Trello 查詢。今天要把它們串在一起，面對企業環境中最真實也最棘手的場景：**一個問題，需要同時查三個系統才能回答**。這不只是技術整合的挑戰，更是一個關於「判斷力」的設計問題——什麼時候查哪裡、查到什麼才算夠、什麼時候該停下來整合而不是繼續挖掘。
 
-## 一條可能的處理流程
+## 一個真實的複合問題
 
-1. 從 Google Sheets 統計工單數量與類別。
-2. 到 Confluence 查詢類別或指標定義。
-3. 到 Trello 尋找相關改善專案與最新進度。
-4. 對照三個來源，整理成結論與下一步。
+假設企業主管問：
 
-這裡真正困難的是「何時查哪裡」。如果工作表已經提供完整分類，就不必先查文件；如果使用者使用模糊縮寫，則可能要先找定義。
+> 「今年需求工單增加最多的類別是哪些？這些類別的定義是什麼？對應的改善專案目前進行到哪裡？」
 
-## Coordinator 的角色
+這句話包含三個不同性質的子問題：
 
-Coordinator 不負責每一項專業操作，而是像專案經理一樣理解需求、選擇工具並整合結果。工具回傳資料後，Coordinator 重新觀察目前狀態，再決定要回答、補查或釐清。
+1. **增加最多的類別是哪些？** → Google Sheets
+2. **這些類別的定義是什麼？** → Confluence
+3. **改善專案進行到哪裡？** → Trello
 
-## 來源要能被追溯
+任何一個來源單獨都給不出完整答案。
 
-跨來源回答最怕把不同時間與定義的資訊混在一起。輸出時要清楚標示數字來自哪張表、定義來自哪份文件、進度來自哪個看板。
+## 一條可能的跨系統處理流程
+
+<Steps>
+  <Step title="分析問題，拆解子任務">
+    Coordinator 識別問題中需要不同工具回答的子問題，並決定合理的執行順序。通常先從最確定、最結構化的資料來源開始。
+  </Step>
+  <Step title="查詢 Google Sheets 取得數字基礎">
+    呼叫 Analyst Tool，取得今年各類別工單數量，與去年同期比較，找出成長率最高的類別。
+  </Step>
+  <Step title="查詢 Confluence 取得類別定義">
+    針對高成長類別搜尋正式定義。若找不到，記錄「此類別無正式文件定義」，不要自行推測。
+  </Step>
+  <Step title="查詢 Trello 取得改善專案進度">
+    使用類別名稱或正式全名搜尋相關卡片，取得任務狀態、負責人、截止日期與最新留言。
+  </Step>
+  <Step title="整合三個來源並標注出處">
+    把數字、定義與進度整合成結構清晰的回答，每段資訊都標注來源。
+  </Step>
+</Steps>
+
+## Coordinator 的角色：像專案經理，而不是執行者
+
+Coordinator 的工作方式很像一位資深專案經理：
+
+- 理解需求，而非逐字執行
+- 把子任務分配給適合的工具
+- 觀察每個結果，重新判斷是否還需要補查
+- 將不同格式的資訊整合成連貫答案
+
+```python
+async def coordinator_loop(user_question: str, max_steps: int = 8):
+    messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    messages.append(HumanMessage(content=user_question))
+
+    for step in range(max_steps):
+        response = await llm_with_tools.ainvoke(messages)
+        messages.append(response)
+
+        if not response.tool_calls:
+            return response.content
+
+        for tool_call in response.tool_calls:
+            result = await execute_tool(tool_call)
+            messages.append(ToolMessage(
+                content=str(result),
+                tool_call_id=tool_call["id"]
+            ))
+
+    return "已達到最大查詢次數，請拆解問題後再試。"
+```
+
+<Info>
+  Coordinator 每次工具呼叫後都會重新觀察目前狀態。若 Google Sheets 顯示只有兩個類別值得關注，就不必查詢所有類別的文件定義。
+</Info>
+
+## 查詢順序的判斷邏輯
+
+<CardGroup cols={2}>
+  <Card title="先從最確定的來源開始" icon="chart-bar">
+    若問題包含數字需求，通常先查 Google Sheets 建立量化基礎，再決定後續文件查詢方向。
+  </Card>
+
+  <Card title="先解決縮寫或模糊名稱" icon="spell-check">
+    若使用者使用縮寫，先到 Confluence 找正式名稱，再用正式名稱搜尋 Trello。
+  </Card>
+
+  <Card title="找不到時要釐清" icon="circle-question">
+    第一個來源找不到資訊時，應評估是否需要請使用者確認，而不是把所有工具都試一遍後勉強拼湊答案。
+  </Card>
+
+  <Card title="數字查完才查解釋" icon="arrow-right-arrow-left">
+    先讓程式算出精確數字，再讓模型根據定義和上下文解釋數字意義。
+  </Card>
+</CardGroup>
+
+## 來源追溯：讓回答可被驗證
+
+跨來源回答最容易出現的品質問題，是把不同時間點、不同定義的資訊混合在一起，卻沒有標注清楚。好的輸出應明確分成數字來源、定義來源與專案進度來源，並附上資料更新時間與原始系統位置。
+
+<Tip>
+  在企業 AI 系統中，來源標注不只是好習慣，更是建立使用者信任的關鍵。當使用者能夠驗證資訊來源，才會願意根據回答做決策。
+</Tip>
 
 ## 踩坑筆記
 
-不要為了展現 Agent 能力，每次都呼叫所有工具。好的工作流追求的是足夠、正確與有效率，而不是工具呼叫數量最多。
+<Warning>
+  **不要為了展示 Agent 能力，就每次都呼叫所有工具。** 好的工作流追求的是「足夠、正確、有效率」，而不是工具呼叫數量最多或回答字數最長。
+</Warning>
+
+當某個工具呼叫失敗時，也不應靜默忽略。每個失敗都應被記錄，並在最終回答中說明哪些資訊無法取得。
+
+```python
+async def execute_tool_safely(tool_call: dict) -> dict:
+    try:
+        result = await execute_tool(tool_call)
+        return {"status": "success", "data": result}
+    except APITimeoutError:
+        return {
+            "status": "error",
+            "tool": tool_call["name"],
+            "reason": "API 請求逾時，請稍後重試"
+        }
+    except DataNotFoundError as e:
+        return {
+            "status": "not_found",
+            "tool": tool_call["name"],
+            "reason": str(e)
+        }
+```
 
 <Info>
   今天只要記住一件事：跨來源 Agent 的價值，是在正確時機取得正確資訊，而不是把所有資料全部搜一遍。
