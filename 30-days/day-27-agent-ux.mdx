@@ -1,29 +1,127 @@
 ---
-title: "Day 27｜使用者不能只看到轉圈圈：AI 工作流的 UX 設計"
+title: "Day 27｜使用者不能只看轉圈圈：Agent UX 設計原則"
 sidebarTitle: "Day 27｜Agent UX"
-description: "理解進度提示、串流、錯誤訊息與完成狀態如何影響信任。"
+description: "學習如何在 AI Agent 執行長時間多步驟任務時提供清晰可信的使用者體驗：掌握人類可讀的分階段進度提示設計原則、串流輸出與任務完成狀態同步機制、分類可行動的錯誤訊息設計，以及從「只有轉圈圈」到「任務可非同步追蹤與恢復」的五個 Agent UX 成熟度等級。"
 ---
 
-Agent 可能需要理解問題、呼叫多個工具、驗證答案並保存紀錄。即使最終答案正確，若使用者只看到長時間轉圈，也會認為系統壞掉。
+Agent 完成一個任務，背後可能需要理解問題意圖、呼叫多個工具、驗證答案、保存紀錄，甚至多輪反覆嘗試。即使最終答案完全正確，若使用者在整個過程中只能看著畫面空轉，很快就會認為系統壞掉了。Agent UX 的核心挑戰，是讓使用者在等待期間持續感知到「工作正在可靠地推進」。
 
-## 進度不是展示內部思考
+## 為什麼 Agent UX 和一般 UX 不同？
 
-好的進度提示應描述可理解的工作階段，例如「確認問題範圍」「查詢工作表」「搜尋文件」「整理回答」。不需要顯示模型的內部推理，也不應暴露工具識別字或技術錯誤堆疊。
+傳統軟體的回應通常是即時的，即使需要等待，進度也容易量化。但 Agent 的本質是非確定性的：
 
-## 串流不一定代表真的完成
+- 不知道需要呼叫幾個工具
+- 不知道哪一輪 LLM 呼叫會最久
+- 中間步驟可能失敗或需要重試
+- 串流輸出結束不代表任務真正完成
 
-早期 Data Machi 會邊生成邊顯示文字，但後端仍要進行查核與存檔。結果是文字看似結束，輸入框卻仍被鎖住。後來改成等待生成、驗證與保存全部完成，再送出 final 事件，前端只播放打字動畫。
+因此，傳統進度條往往不適用，需要新的 UX 思維。
 
-## 錯誤要可行動
+## 進度提示的設計原則
 
-「Something went wrong」無法幫助使用者。更好的錯誤訊息會區分 PDF 尚未建立、模型過載、找不到支持資料或工具執行失敗，並提供下一步。
+<Steps>
+  <Step title="描述工作階段，而非技術細節">
+    好的進度提示讓使用者看懂「現在在做什麼」，而不是暴露內部工具 ID。
 
-## 踩坑筆記
+    | 不建議顯示 | 建議顯示 |
+    | --- | --- |
+    | `tool_call: pdf_search_v2` | 正在搜尋知識庫文件... |
+    | `context=RAG_PIPELINE` | 正在確認問題範圍... |
+    | `Error: 429` | 模型目前負載較高，稍等一下... |
+    | `schema_check` | 正在確認回答準確性... |
+  </Step>
+  <Step title="串流要與任務完成同步">
+    串流能改善感知速度，但若文字已顯示完、後端仍在查核與存檔，使用者會困惑。應由後端完成生成、驗證與存檔後送出 final 事件，前端再解鎖輸入框。
+  </Step>
+  <Step title="錯誤訊息要可行動">
+    使用者需要知道發生什麼，以及下一步能做什麼，而不是只看到 Something went wrong。
+  </Step>
+  <Step title="完成狀態要明確">
+    回答已生成、紀錄已保存、輸入框已解鎖、是否有待辦事項，都應清楚呈現。
+  </Step>
+</Steps>
 
-不要讓模型輸出的「請稍等，我幫你查」成為最終回答。系統如果不支援背景續跑，就必須在同一輪真正呼叫工具或直接提出釐清問題。
+```typescript
+const PROGRESS_MESSAGES = {
+  routing:    "確認問題範圍...",
+  searching:  "搜尋相關文件...",
+  querying:   "查詢工作表資料...",
+  generating: "整理回答中...",
+  validating: "確認資料準確性...",
+  saving:     "保存對話紀錄...",
+};
+```
+
+## 串流與完成狀態同步
+
+```typescript
+eventSource.addEventListener('progress', (e) => {
+  const { stage, message } = JSON.parse(e.data);
+  updateProgressIndicator(stage, message);
+});
+
+eventSource.addEventListener('final', (e) => {
+  const { content } = JSON.parse(e.data);
+  typewriterEffect(content);
+  unlockInputField();
+});
+```
+
+## 錯誤訊息要可行動
+
+<CardGroup cols={2}>
+  <Card title="PDF 尚未建立索引" icon="file-pdf">
+    這份 PDF 尚未完成索引，請至知識庫頁面重新上傳後再試。
+  </Card>
+
+  <Card title="模型過載" icon="server">
+    AI 模型目前負載較高，建議稍後重新提問或縮小問題範圍。
+  </Card>
+
+  <Card title="找不到支持資料" icon="magnifying-glass">
+    未能在知識庫找到足夠相關資訊，建議確認資料是否已上傳。
+  </Card>
+
+  <Card title="工具執行失敗" icon="wrench">
+    查詢工作表時發生錯誤，請確認連線設定是否仍然有效。
+  </Card>
+</CardGroup>
+
+## 不要讓模型的「請稍等」成為最終回答
+
+<Warning>
+  如果模型輸出「請稍等，我幫你查一下」，但系統並沒有真的在背景執行工具，這句話就會成為最終回答，讓使用者永遠等不到結果。
+</Warning>
+
+正確做法有兩種：
+
+1. 支援背景非同步執行時，顯示任務已進入佇列並提供追蹤介面
+2. 不支援非同步時，在同一輪真正完成工具查詢，或明確說明目前無法查詢
+
+## Agent UX 成熟度
+
+<Accordion title="Level 1：只有轉圈圈">
+  使用者不知道現在在做什麼、還要等多久。
+</Accordion>
+
+<Accordion title="Level 2：技術語言進度">
+  顯示 `tool_call`、`context_type` 等工程術語，非技術使用者仍看不懂。
+</Accordion>
+
+<Accordion title="Level 3：人類可讀的進度訊息">
+  顯示「搜尋文件中」「整理回答中」等容易理解的文字。這是企業 Agent 的基本水準。
+</Accordion>
+
+<Accordion title="Level 4：可行動錯誤 + 明確完成狀態">
+  錯誤訊息提供下一步，完成後也有清楚視覺回饋。
+</Accordion>
+
+<Accordion title="Level 5：任務可追蹤、可恢復">
+  使用者可以離開頁面，回來後仍能看到任務狀態與結果，支援長時間背景任務與通知。
+</Accordion>
 
 <Info>
   今天只要記住一件事：Agent UX 的目的不是讓 AI 看起來忙碌，而是讓使用者知道工作是否正在可靠地前進。
 </Info>
 
-下一篇，我們會看 Data Machi 如何把會議內容轉成可追蹤的行動。
+下一篇，我們將看 Data Machi 如何把會議錄音轉成可追蹤的行動項目。

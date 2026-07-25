@@ -1,34 +1,126 @@
 ---
-title: "Day 24｜多個工具不等於 Multi-Agent：什麼時候才需要拆 Agent？"
+title: "Day 24｜多工具架構 vs Multi-Agent 的本質差異"
 sidebarTitle: "Day 24｜不要為拆而拆"
-description: "區分單一 Agent 多工具與真正多 Agent 架構。"
+description: "釐清單一 Agent 多工具與真正 Multi-Agent 架構的本質差異，掌握何時拆分 Agent 真正有意義，以及過早拆分的隱藏成本。"
 ---
 
-只要系統裡有 Analyst、Trello、Confluence、Document 四種能力，就能稱為 Multi-Agent 嗎？不一定。
+「我們的系統裡有 Analyst 查詢、Trello 操作、Confluence 搜尋、Document 處理四種能力，這樣算不算 Multi-Agent 架構？」答案是不一定。工具的數量和 Agent 的數量是兩個完全不同的維度。混淆兩者，可能讓你在不需要複雜架構的地方引入額外成本。
 
-如果這些能力只是四組 Tool，由同一個 Coordinator 選擇與呼叫，較精確的描述是「單一 Agent 加多個領域工具」。真正的 Multi-Agent 通常代表不同 Agent 擁有各自 Prompt、上下文、工具、權限或模型，並存在明確交接。
+## 工具 vs. Agent：本質差異
 
-## 什麼時候值得拆 Agent？
+<CardGroup cols={2}>
+  <Card title="工具（Tool）" icon="wrench">
+    工具是 Agent 可以呼叫的能力單元，有固定輸入、執行邏輯與輸出格式。它本身不具備判斷能力。
+  </Card>
 
-- 單一 Agent 工具太多，經常選錯。
-- 不同領域需要隔離大量上下文。
-- 任務存在研究、審核、修正等明確角色交接。
-- 不同角色需要不同權限或模型。
+  <Card title="Agent" icon="robot">
+    Agent 是具備判斷能力的工作主體，有自己的 Prompt、上下文、工具集、模型與權限設定。不同 Agent 之間存在明確交接點。
+  </Card>
+</CardGroup>
 
-## Data Machi 的現況
+## 用結構判斷
 
-目前核心 Graph 是一個 Coordinator 在 Agent 與 Action 節點間循環，四個領域主要以工具形式存在。這並不削弱系統價值，反而讓架構更簡單、延遲更低。
+```text
+【單一 Agent + 多個工具】
+使用者輸入
+  ↓
+Coordinator Agent
+  ├── analyst_query()
+  ├── trello_search()
+  ├── confluence_search()
+  └── document_generate()
+  ↓
+最終答案
 
-## 未來可能的拆法
+【真正的 Multi-Agent】
+使用者輸入
+  ↓
+Coordinator
+  ├── Analyst Agent
+  ├── Reviewer Agent
+  └── Writer Agent
+  ↓
+最終報告
+```
 
-若未來需要讓 Analyst 產出分析、Reviewer 獨立查核，再由 Writer 整理報告，就適合拆成不同節點或 Agent。拆分應由真實需求驅動。
+若四種能力只是四組 Tool，由同一個 Coordinator 的 LLM 選擇與呼叫，這是「**單一 Agent 加多個領域工具**」，而不是 Multi-Agent。
 
-## 踩坑筆記
+## 什麼時候值得拆分 Agent？
 
-Multi-Agent 會增加模型呼叫、上下文傳遞、除錯與責任判斷成本。角色越多，不代表系統越成熟。
+<Steps>
+  <Step title="工具太多，選錯頻率升高">
+    當一個 Agent 擁有大量功能相近的工具時，模型選擇準確度可能下降。可依領域拆分 Sub-Agent，讓每個 Agent 的工具集更簡潔。
+  </Step>
+  <Step title="不同領域需要隔離大量上下文">
+    若所有領域背景都塞進同一個 System Prompt，可能造成上下文過長與相互干擾。獨立 Agent 可以只載入自己需要的知識。
+  </Step>
+  <Step title="任務存在明確角色交接">
+    例如「研究→審核→修正→輸出」，Reviewer 可以退回 Analyst 重做，這種流程天然適合拆成不同 Agent 節點。
+  </Step>
+  <Step title="不同角色需要不同權限或模型">
+    Reviewer 可使用較強模型，Writer 使用較便宜模型；或某個 Agent 可讀敏感資料，其他 Agent 不可存取。
+  </Step>
+</Steps>
+
+## Data Machi 的現況：刻意保持簡單
+
+Data Machi 目前的核心架構是一個 Coordinator 在 Agent 節點與 Action 節點之間循環，Analyst、Trello、Confluence、Document 主要以工具形式存在。
+
+<Note>
+  這是刻意的選擇。對目前業務場景，單一 Coordinator + 多工具已能完整覆蓋需求，並帶來架構簡單、模型呼叫較少、延遲較低與除錯直觀等優勢。
+</Note>
+
+```python
+tools = [
+    search_tickets_tool,
+    get_ticket_stats_tool,
+    analyze_trends_tool,
+    search_trello_cards_tool,
+    get_board_status_tool,
+    search_confluence_tool,
+    get_document_content_tool,
+    generate_report_tool,
+    format_output_tool,
+]
+
+coordinator = create_react_agent(llm, tools=tools)
+```
+
+## 未來可能的拆分時機
+
+<Accordion title="分析師 + 審核師工作流">
+  ```text
+  Analyst Agent → Reviewer Agent → Writer Agent
+          ↑          │
+          └──退回修正┘
+  ```
+</Accordion>
+
+<Accordion title="工具數量爆炸">
+  若工具清單從個位數增長到數十個，而且 Coordinator 選擇準確度開始下降，就可考慮按領域拆分。
+</Accordion>
+
+<Accordion title="不同權限要求">
+  若管理員能執行刪除或批量更新，而普通使用者只能查詢，用不同 Agent 隔離權限邊界會更清晰。
+</Accordion>
+
+## Multi-Agent 的隱藏成本
+
+<Warning>
+  Multi-Agent 架構會帶來：
+
+  - 更多模型呼叫與更高 API 費用
+  - Agent 間上下文傳遞設計
+  - 更長的除錯鏈路
+  - 更困難的責任追溯
+</Warning>
+
+<Tip>
+  在拆分 Agent 前，先問：「能不能用更簡單的方式解決？」工具選錯可以先改善 description，上下文過長可以先摘要，不必立刻增加 Agent。
+</Tip>
 
 <Info>
   今天只要記住一件事：Agent 架構的好壞不看角色數量，而看分工是否真的降低複雜度與風險。
 </Info>
 
-下一篇，我們會談企業不能完全交給 AI 的高風險操作。
+下一篇，我們會聚焦高風險操作前的 Human-in-the-loop 設計。

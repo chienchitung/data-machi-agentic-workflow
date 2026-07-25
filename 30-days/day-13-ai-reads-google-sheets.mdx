@@ -1,31 +1,126 @@
 ---
-title: "Day 13｜讓 AI 看懂 Google Sheets：Data Analyst Tool 的設計"
-sidebarTitle: "Day 13｜AI 讀 Google Sheets"
-description: "拆解自然語言如何轉成欄位辨識、篩選與統計。"
+title: "Day 13｜AI 精準讀取 Google Sheets 的方法：欄位別名、Pandas 計算與快取設計"
+sidebarTitle: "Day 13｜Google Sheets"
+description: "直接把企業試算表塞進 Prompt 成本高且計算容易出錯。Data Machi 透過欄位別名對應、Pandas 精確篩選統計與短時快取設計，讓程式負責所有數字的計算工作，讓語言模型只需要理解使用者意圖、整合各項資料，並清楚組織出可信賴且準確的最終回答給使用者。"
 ---
 
-讓 AI 讀取 Google Sheets，看起來只是把資料表交給模型，但企業資料往往有欄位別名、空白列、日期格式與大量明細。如果直接把整張表塞進 Prompt，不但成本高，也容易算錯。
+讓 AI 讀取 Google Sheets，聽起來像是把資料表丟給模型就能搞定的事，但任何真正在企業環境處理過資料的人都知道，現實遠比 Demo 複雜得多。企業的試算表往往混雜著欄位別名、空白列、不一致的日期格式、合併儲存格，以及幾千行的明細資料。如果直接把整張表塞進 Prompt，不但 Token 成本會爆炸，模型在面對大量數字時的計算準確率也難以保證。Data Machi 的 Analyst Tool 設計，核心原則只有一句話：**讓程式負責精確計算，讓 LLM 負責理解與溝通。**
+
+## 為什麼不能直接把整張表送給模型？
+
+假設你有一張記錄 2,000 筆工單的 Google Sheets，每筆工單有 15 個欄位。把它完整送進 Prompt 大概需要 30,000 個 Token。而且更糟糕的是，**語言模型並不擅長精確的數學計算**——它可以理解「計算每個類別的工單數量」這個意圖，但若要它直接數出 Excel 裡的列數，出錯的機率遠高於你的預期。
+
+<Warning>
+  不要讓模型直接「心算」資料表。超過幾十列的數值計算，都應該交給可驗證的程式（例如 Pandas）來執行，模型只負責解讀使用者意圖和呈現結果。
+</Warning>
 
 ## 先用程式處理，再讓模型解釋
 
-Data Machi 的 Analyst Tool 會先透過程式讀取工作表、補齊不完整欄位、移除空白資料，再用 Pandas 執行篩選與統計。中文的「部門」「負責人」「截止日期」也會對應到實際英文字段。
+Data Machi 的 Analyst Tool 採用以下流程：
 
-這代表 LLM 的角色不是逐列心算，而是理解使用者意圖、選擇工具並整理結果。精確計算仍由可驗證的程式負責。
+<Steps>
+  <Step title="讀取並清理工作表">
+    透過 Google Sheets API 讀取指定工作表，移除空白列、補齊不完整欄位、統一日期格式。這個步驟確保後續計算的資料是乾淨可信的。
+  </Step>
+  <Step title="欄位別名對應">
+    把使用者可能用的中文自然語言欄位名稱（「負責人」「承辦人」「處理人員」）統一對應到資料表的正式英文欄位（`assigned_to`）。
+  </Step>
+  <Step title="用 Pandas 執行篩選與統計">
+    根據模型解析出的查詢條件，用 Pandas 對清理好的資料框執行篩選、分組、計算。結果是精確的數字，不是模型的「估計」。
+  </Step>
+  <Step title="將結果回傳給模型">
+    把計算結果（通常是 JSON 格式的統計摘要）回傳給 Coordinator，讓它根據數字組織成使用者能理解的自然語言回答。
+  </Step>
+</Steps>
+
+```python
+@tool
+def query_ticket_sheet(
+    category: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    group_by: str = None
+) -> dict:
+    """查詢工單試算表中的數量與統計資訊。"""
+    df = get_cached_sheet("ticket_sheet")
+    df = clean_dataframe(df)
+
+    if group_by:
+        group_by = COLUMN_ALIAS_MAP.get(group_by, group_by)
+    if category:
+        df = df[df["category"] == category]
+    if start_date:
+        df = df[df["date"] >= pd.to_datetime(start_date)]
+    if end_date:
+        df = df[df["date"] <= pd.to_datetime(end_date)]
+
+    if group_by and group_by in df.columns:
+        result = df.groupby(group_by).size().to_dict()
+    else:
+        result = {"total_count": len(df)}
+
+    return {"status": "success", "data": result, "row_count": len(df)}
+```
 
 ## 為什麼需要欄位別名？
 
-一般使用者不會記得資料表的正式 schema。他可能說「承辦人」「處理人」或「Assigned To」。別名表把自然語言轉成標準欄位，降低使用門檻。
+一般使用者不會記得也不應該需要知道資料表的正式 schema。他說的可能是「承辦人」，資料表裡寫的是 `assigned_to`；他說「截止日期」，欄位名稱是 `due_date`；他說「這個月」，你需要把它轉成對應的日期範圍。
 
-## 效能也很重要
+```python
+COLUMN_ALIAS_MAP = {
+    "負責人": "assigned_to",
+    "承辦人": "assigned_to",
+    "處理人": "assigned_to",
+    "截止日期": "due_date",
+    "到期日": "due_date",
+    "建立日期": "created_at",
+    "類別": "category",
+    "分類": "category",
+    "狀態": "status",
+    "部門": "department",
+}
+```
 
-同一輪對話可能多次查詢同一張工作表，因此系統加入短時間快取，避免每次都完整呼叫 Sheets API。這類設計不會出現在漂亮 Demo 中，卻直接影響實際使用體驗。
+<Note>
+  別名表不需要窮舉所有可能，但應該涵蓋使用者在實際對話中最常用的說法。可以在系統上線後持續觀察使用者的輸入，補充新的別名。
+</Note>
+
+## 效能：快取的重要性
+
+同一輪對話中，使用者可能連續問幾個相關問題。如果每一個問題都完整呼叫一次 Google Sheets API，不但速度慢，也會不必要地消耗 API 配額。Data Machi 的解法是加入**短時間快取（Short-term Cache）**：
+
+```python
+import time
+
+_cache = {}
+CACHE_TTL_SECONDS = 120
+
+def get_cached_sheet(sheet_name: str) -> pd.DataFrame:
+    now = time.time()
+    if sheet_name in _cache:
+        df, timestamp = _cache[sheet_name]
+        if now - timestamp < CACHE_TTL_SECONDS:
+            return df
+
+    df = fetch_sheet_from_api(sheet_name)
+    _cache[sheet_name] = (df, now)
+    return df
+```
+
+<Accordion title="快取可能帶來什麼問題？">
+  若使用者在快取有效期內更新了資料表，然後立刻詢問最新數字，系統可能回傳舊資料。設計上應讓使用者能夠主動「重新整理」，或在回答中標注資料的取得時間。
+</Accordion>
 
 ## 踩坑筆記
 
-不要讓模型自行編造不存在的欄位。查詢前應先確認表格結構；若欄位或條件不明確，就先釐清，而不是猜測。
+<Warning>
+  **不要讓模型自行編造不存在的欄位或資料。** 當使用者詢問的條件在資料表中找不到對應欄位時，工具應該明確回傳「此欄位不存在」，而不是讓模型猜測或用近似欄位代替。
+</Warning>
+
+另一個常見問題是**日期解析**。使用者說「上個月」、「最近三個月」或「Q1」，這些都需要程式層明確地轉換成日期範圍，不能依賴模型在 Prompt 中「理解」。
 
 <Info>
   今天只要記住一件事：讓程式負責精確計算，讓 LLM 負責理解與溝通。
 </Info>
 
-下一篇，我們會看看同一個企業問題如何散落在 Confluence 與 Trello。
+下一篇，我們會看另一個更複雜的挑戰：同一個企業問題的答案，往往分散在 Confluence 和 Trello 兩個不同的系統裡。

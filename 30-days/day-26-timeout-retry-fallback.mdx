@@ -1,29 +1,141 @@
 ---
-title: "Day 26｜模型也會塞車：Timeout、Retry 與 Fallback 怎麼設計？"
-sidebarTitle: "Day 26｜Timeout 與 Fallback"
-description: "理解企業 AI 如何面對模型逾時、過載與服務不穩定。"
+title: "Day 26｜模型為什麼會失敗：Timeout、Retry 與 Fallback 設計"
+sidebarTitle: "Day 26｜可靠性設計"
+description: "了解企業 AI 在正式環境中必然遭遇逾時、限流（HTTP 429）與服務中斷（HTTP 503）等失敗情境，學習以 Timeout 防止無限等待、以指數退避 Retry 處理暫時性錯誤、以 Fallback 自動切換備用模型，並為每類錯誤設計清晰可行的使用者提示。"
 ---
 
-很多 AI Demo 假設模型每次都會正常回答，但正式使用時，模型可能逾時、過載、遇到 429 限流，或在長報告生成到一半失敗。
+真實的企業 AI 產品不存在「模型永遠正常回答」這件事。許多 Demo 在理想環境下跑得漂亮，一旦上線就面臨模型過載、網路不穩、限流或長時間請求到一半失敗的窘境。可靠性設計不是事後補救，而是在系統架構階段就必須納入的工程紀律。
+
+## 為什麼模型會失敗？
+
+<CardGroup cols={2}>
+  <Card title="逾時（Timeout）" icon="clock">
+    請求送出後，模型長時間未回應。常見於生成長篇報告、複雜推理或高峰時段。
+  </Card>
+
+  <Card title="限流（Rate Limit）" icon="gauge-high">
+    API 回傳 HTTP 429，表示短時間內請求次數或 Token 用量超出配額上限。
+  </Card>
+
+  <Card title="服務中斷（Service Error）" icon="triangle-exclamation">
+    HTTP 500 或 503，代表模型服務端出現問題，通常為暫時性錯誤。
+  </Card>
+
+  <Card title="輸出截斷（Truncation）" icon="scissors">
+    回應生成到一半被中斷，導致 JSON 不完整或文章沒有結尾。
+  </Card>
+</CardGroup>
 
 ## 三層可靠性設計
 
-- **Timeout**：設定單次等待上限，避免請求無限卡住。
-- **Retry**：對暫時性錯誤做有限次快速重試。
-- **Fallback**：主要模型仍失敗時，切換到另一個模型。
+<Steps>
+  <Step title="第一層：Timeout 設定">
+    為不同任務設定合理等待上限。路由判斷可以較短，長文與會議摘要則需要更長時間。
 
-Data Machi 將使用者可見的最終回答與內部 JSON 判斷分開。最終回答需要較長生成時間；路由、釐清與查核則使用較快模型與較短 timeout。主要模型失敗時，也會降級到另一個模型，而不是重複呼叫同一個過載服務。
+    | 任務類型 | 建議 Timeout |
+    | --- | --- |
+    | 路由判斷 | 5–8 秒 |
+    | 釐清問題 | 8–12 秒 |
+    | 查核與驗證 | 10–15 秒 |
+    | 最終回答生成 | 30–60 秒 |
+    | 會議摘要 | 60–120 秒 |
+  </Step>
+  <Step title="第二層：Retry 策略">
+    對 429、503 與網路逾時等暫時性錯誤，使用有限次重試與指數退避；對 400、401 等確定性錯誤則不應重試。
+  </Step>
+  <Step title="第三層：Fallback 降級">
+    主要模型重試仍失敗時，切換到備用模型，而不是持續呼叫同一個已過載的服務。
+  </Step>
+</Steps>
+
+```python
+import httpx
+
+async def call_llm_with_timeout(prompt: str, timeout_seconds: int = 30):
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        try:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {API_KEY}"},
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": prompt}]
+                }
+            )
+            return response.json()
+        except httpx.TimeoutException:
+            raise TimeoutError(
+                f"模型在 {timeout_seconds} 秒內未回應，請稍後重試。"
+            )
+```
+
+```python
+import asyncio
+import random
+
+async def retry_with_backoff(func, max_retries: int = 3, base_delay: float = 1.0):
+    for attempt in range(max_retries):
+        try:
+            return await func()
+        except RateLimitError:
+            if attempt == max_retries - 1:
+                raise
+            delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+            await asyncio.sleep(delay)
+```
+
+<Warning>
+  Retry 次數不是越多越好。同步聊天情境通常最多重試 2–3 次，避免使用者等待過久；背景非同步任務才適合更多次重試。
+</Warning>
+
+```python
+async def call_with_fallback(prompt: str):
+    primary_models = ["gpt-4o", "claude-3-5-sonnet-20241022"]
+    fallback_model = "gpt-4o-mini"
+
+    for model in primary_models:
+        try:
+            return await call_model(model, prompt, timeout=30)
+        except (TimeoutError, RateLimitError, ServiceUnavailableError):
+            continue
+
+    return await call_model(fallback_model, prompt, timeout=15)
+```
+
+<Tip>
+  Fallback 不一定是較差選擇。路由判斷、問題釐清與格式驗證等任務，使用輕量模型通常更快、更便宜。
+</Tip>
+
+## Data Machi 的實作策略
+
+**快速路徑（Fast Path）**：路由判斷、釐清問題、輸出查核
+
+- 使用輕量模型
+- Timeout 較短
+- 失敗時快速回報，不做多次重試
+
+**慢速路徑（Slow Path）**：最終回答生成、長文摘要、會議記錄
+
+- 使用主力模型
+- Timeout 較長
+- 先重試，仍失敗才降級
 
 ## 錯誤要說人話
 
-逾時不應被顯示成「API Key 錯誤」。使用者需要知道是模型負載較高、問題範圍太大，還是憑證真的無效。正確分類錯誤，才能提供有用的下一步。
+| 實際錯誤原因 | 應顯示的訊息 |
+| --- | --- |
+| HTTP 429 | 目前請求量較高，請稍後再試 |
+| 逾時 | 模型目前負載較重，建議縮小問題範圍 |
+| HTTP 401 | 帳號憑證有問題，請聯繫管理員 |
+| 輸出截斷 | 回答生成中斷，請重新提問或縮短問題 |
+| 找不到資料 | 未能在知識庫找到足夠資訊 |
 
-## 踩坑筆記
-
-Retry 次數不是越多越好。同步聊天中，六次指數退避可能讓使用者盯著畫面等很久。企業產品要在成功率與等待體驗之間取捨。
+<Accordion title="進階：Circuit Breaker">
+  當某個模型端點在短時間內失敗率超過閾值，系統可暫停對該端點的請求，避免浪費大量 Retry 時間。待健康檢查通過後，再逐步恢復流量。
+</Accordion>
 
 <Info>
   今天只要記住一件事：模型失敗不是例外，而是正式產品必須預先設計的正常情境。
 </Info>
 
-下一篇，我們會談使用者等待 Agent 工作時，介面應該如何溝通。
+下一篇，我們將討論使用者等待 Agent 工作時，介面應該如何溝通進度。

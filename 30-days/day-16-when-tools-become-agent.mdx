@@ -1,31 +1,116 @@
 ---
-title: "Day 16｜什麼時候工具會變成 Agent？"
+title: "Day 16｜什麼時候工具呼叫會進化成 Agent？從固定流程到決策循環：企業 AI 架構的本質差異"
 sidebarTitle: "Day 16｜工具如何變 Agent"
-description: "理解 Tool 與 Agent 在決策能力上的差別。"
+description: "探討 Tool 與 Agent 在架構設計上的本質差異。工具只負責執行被指定的單一能力，不具備自主決策能力；Agent 則根據任務語意主動判斷使用哪個工具、觀察執行結果、並在資料不足時調整策略。這個「判斷、行動、觀察、再判斷」的決策循環，才是讓系統從自動化腳本演進到智慧代理的核心關鍵。"
 ---
 
-一個 Tool 只負責執行特定能力，例如查詢工作表或搜尋文件。Agent 則需要根據任務判斷：要不要使用工具、使用哪一個、取得結果後下一步是什麼。
+在 AI 系統的設計中，「工具呼叫」與「Agent」經常被混用，但兩者在架構上有本質的差異。一個工具只負責執行特定能力，例如查詢試算表、搜尋文件、建立任務卡片。Agent 則需要根據任務情境主動判斷：要不要使用工具？使用哪一個？取得結果之後，下一步該做什麼？這個「判斷→行動→觀察→再判斷」的循環，才是 Agent 真正的核心所在。
 
-## 核心差別是決策循環
+## Tool 與 Agent 的根本差異
 
-如果程式固定規定「收到問題就查 PDF」，這是一條自動化流程。當模型能根據問題選擇 PDF、Sheets、Trello 或 Confluence，並在結果不足時改變策略，就開始具備 Agent 特徵。
+<CardGroup cols={2}>
+  <Card title="Tool（工具）" icon="wrench">
+    被呼叫時執行固定能力，不會自行判斷是否呼叫自己、何時停止，或是否需要換用其他工具。執行結束即完成任務。
+  </Card>
 
-Agent 並不代表 AI 擁有自由意志。它只是被允許在預先定義的工具、規則與結束條件中做選擇。
+  <Card title="Agent（代理）" icon="robot">
+    接收到任務後，根據語意選擇工具、觀察執行結果、判斷是否足夠，必要時調整策略、重新行動，直到達成目標或觸發停止條件。
+  </Card>
+</CardGroup>
 
-## Data Machi 實戰
+<Info>
+  **核心差別是決策循環**：固定規定「收到問題就查 PDF」是一條自動化流程；模型能根據問題選擇 PDF、試算表、Trello 或 Confluence，並在結果不足時主動改變策略，才開始具備 Agent 特徵。
+</Info>
 
-Data Machi 的 Coordinator 會綁定所有可用工具。模型收到問題後，可以輸出 Tool Call；工具執行結果會再回到模型，讓它決定繼續查詢或產生答案。
+## 決策循環長什麼樣子？
 
-## 如何判斷是否真的需要 Agent？
+<Steps>
+  <Step title="接收任務">
+    使用者輸入問題或需求，Agent 理解意圖並判斷當前對話脈絡。
+  </Step>
+  <Step title="選擇工具">
+    根據問題語意，從可用工具清單中選擇最適合的一個或多個工具。
+  </Step>
+  <Step title="執行並觀察">
+    呼叫工具、取得結果，評估資料是否完整、是否符合預期。
+  </Step>
+  <Step title="重新判斷">
+    若結果充分，整理答案；若不足，調整策略、補查其他工具，或向使用者釐清需求。
+  </Step>
+  <Step title="輸出或繼續">
+    產生最終回應，或在下一輪延續循環。
+  </Step>
+</Steps>
 
-如果任務步驟固定、條件清楚，傳統程式流程通常更穩定。只有當輸入變化大、工具選擇需要語意判斷，或資料不足時要動態調整，Agent 才真正有價值。
+## 一個具體情境對比
 
-## 踩坑筆記
+```text
+# 工具呼叫模式（固定流程）
+用戶輸入 → 呼叫 Google Sheets 工具 → 回傳原始資料 → 結束
 
-不要把「呼叫一次 API」包裝成 Agent。Agent 的重點不是名稱，而是是否存在觀察結果、重新判斷與選擇下一步的能力。
+# Agent 模式（決策循環）
+用戶輸入
+  → 判斷需要數據分析工具
+  → 查詢上個月銷售資料
+  → 觀察：資料缺少「市場」欄位
+  → 改查 Confluence 的區域定義文件
+  → 整合兩份資料
+  → 回覆使用者
+```
+
+## Data Machi 的實作方式
+
+在 Data Machi 中，Coordinator 扮演 Agent 的核心角色。模型收到問題後可以輸出 Tool Call；工具執行結果會以 `ToolMessage` 回到模型，讓它決定是要繼續查詢、整合資料，還是直接產生答案。
+
+```python
+def agent_node(state: AgentState) -> AgentState:
+    messages = state["messages"]
+    response = llm_with_tools.invoke(messages)
+    return {"messages": [response]}
+
+def action_node(state: AgentState) -> AgentState:
+    tool_calls = state["messages"][-1].tool_calls
+    results = []
+    for call in tool_calls:
+        result = execute_tool(call)
+        results.append(ToolMessage(content=result, tool_call_id=call["id"]))
+    return {"messages": results}
+```
+
+這個 `agent → action → agent` 的循環，正是 ReAct 架構的基礎。
+
+## 什麼時候真的需要 Agent？
+
+<Accordion title="任務步驟是否固定？">
+  如果輸入格式固定、處理步驟明確、輸出格式一致，傳統程式流程通常更穩定、更快速、更易維護。
+</Accordion>
+
+<Accordion title="工具選擇是否需要語意判斷？">
+  當使用者問題可能需要不同的工具組合，而且組合取決於語意內容，才是 Agent 擅長的領域。
+</Accordion>
+
+<Accordion title="資料不足時需要動態調整嗎？">
+  如果系統需要在查無資料、結果不完整或來源衝突時自行決定下一步，Agent 的觀察與判斷能力就很重要。
+</Accordion>
+
+<Accordion title="任務跨越多個資料來源嗎？">
+  需要整合多個工具結果、比較不同來源或在多個系統之間協調的任務，特別適合 Agent 架構。
+</Accordion>
+
+<Warning>
+  不要把「呼叫一次 API」包裝成 Agent。Agent 的重點不是名稱，而是是否存在觀察結果、重新判斷與選擇下一步的能力。
+</Warning>
+
+## Agent 的邊界與安全
+
+<Note>
+  Agent 不代表 AI 擁有無限制的決策能力。它只是在預先定義的工具清單、業務規則與停止條件中做出選擇。
+</Note>
+
+設計良好的 Agent 應具備有限工具集、明確停止條件、可觀測行動記錄與失敗時的優雅降級。
 
 <Info>
   今天只要記住一件事：Tool 提供能力，Agent 負責選擇與組合能力。
 </Info>
 
-下一篇，我們會用 ReAct 理解 Agent 如何在行動與觀察之間循環。
+下一篇，我們會用 ReAct 框架理解 Agent 如何在思考、行動與觀察之間持續循環。

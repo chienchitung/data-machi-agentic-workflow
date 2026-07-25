@@ -1,33 +1,142 @@
 ---
-title: "Day 22｜LangGraph 是什麼？用 State、Node、Edge 管理 AI 工作"
+title: "Day 22｜LangGraph 的 State、Node 與 Edge 核心概念"
 sidebarTitle: "Day 22｜認識 LangGraph"
-description: "用流程圖與接力棒理解 LangGraph 的核心概念。"
+description: "用接力棒與流程圖的比喻，深入理解 LangGraph 的三大核心概念，以及如何把 Agent 決策從黑箱變成可管理的白箱流程。"
 ---
 
-LangGraph 可以把 Agent 工作拆成一張有狀態的圖。它的核心不是「把流程畫漂亮」，而是讓每一步、每個條件與目前進度都能被明確管理。
+如果說 `AgentExecutor` 是把工作丟給模型、讓它自己決定怎麼做，那 LangGraph 就是在保留模型語意能力的同時，讓開發者重新拿回流程的主導權。LangGraph 的核心思想是把 Agent 的工作流表達成一張「有狀態的圖」——每個節點代表一個工作單元，每條邊代表一個流向決策，整張圖的當前進度則保存在一個結構化的 State 物件中。
 
-## 三個基本概念
+## 三個核心概念
 
-- **State**：保存目前任務資訊，像團隊交接時使用的接力棒。
-- **Node**：執行工作的節點，可以是模型、工具或一般程式。
-- **Edge**：決定下一步走向，也可以根據條件選擇不同路徑。
+<CardGroup cols={3}>
+  <Card title="State：接力棒" icon="database">
+    State 是整個工作流共享的資料結構，記錄任務目前的關鍵資訊。每個節點讀取需要的資料，執行完後把結果寫回 State，再交給下一個節點。
+  </Card>
 
-Data Machi 目前的 Graph 主要包含 Agent 與 Action。Agent 判斷是否呼叫工具；Action 執行工具；結果回到 Agent 再次判斷。若不再需要工具，流程結束並輸出答案。
+  <Card title="Node：工作站" icon="circle-nodes">
+    Node 是實際執行工作的單元，可以是 LLM 呼叫、工具執行或普通 Python 函式。Node 彼此獨立，可以單獨測試與替換。
+  </Card>
 
-```text
-START → Agent → Action → Agent → END
+  <Card title="Edge：路由決策" icon="arrow-right">
+    Edge 定義節點之間的流向。固定 Edge 表示 A 做完一定去 B；條件 Edge 則依 State 選擇不同路徑。
+  </Card>
+</CardGroup>
+
+### 用程式碼看三者的關係
+
+```python
+from langgraph.graph import StateGraph, END
+from typing import TypedDict, Annotated
+import operator
+
+class AgentState(TypedDict):
+    messages: Annotated[list, operator.add]
+    tool_results: dict
+    final_answer: str
+
+def agent_node(state: AgentState):
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+def action_node(state: AgentState):
+    tool_call = state["messages"][-1].tool_calls[0]
+    result = execute_tool(tool_call)
+    return {"tool_results": {tool_call["name"]: result}}
+
+def should_continue(state: AgentState):
+    last_message = state["messages"][-1]
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        return "action"
+    return END
+
+graph = StateGraph(AgentState)
+graph.add_node("agent", agent_node)
+graph.add_node("action", action_node)
+graph.set_entry_point("agent")
+graph.add_conditional_edges("agent", should_continue)
+graph.add_edge("action", "agent")
+
+app = graph.compile()
 ```
 
-## 白箱思維
+## Data Machi 的基本 Graph 結構
 
-傳統 Agent loop 很多決策藏在模型內部。LangGraph 讓開發者把部分規則寫成程式，例如工具結果為空時改查其他來源、重試超過次數就停止，或高風險操作前暫停。
+```text
+START
+  │
+  ▼
+Agent Node
+  ├── 有 Tool Call → Action Node → 回到 Agent Node
+  └── 無 Tool Call → END（輸出答案）
+```
 
-## 踩坑筆記
+<Steps>
+  <Step title="START → Agent Node">
+    使用者輸入進入 Agent Node，LLM 分析問題並決定是否需要工具。
+  </Step>
+  <Step title="Agent Node → Action Node">
+    若回應包含 Tool Call，條件 Edge 將流程導向 Action Node。
+  </Step>
+  <Step title="Action Node → Agent Node">
+    工具執行結果附加到 State，流程回到 Agent Node 再次判斷。
+  </Step>
+  <Step title="Agent Node → END">
+    若已有足夠資訊，輸出最終答案並結束。
+  </Step>
+</Steps>
 
-LangGraph 不是用來取代所有 Prompt。模型仍負責語意理解，程式則負責必須確定執行的流程。兩者應分工，而不是互相排斥。
+## 白箱思維：讓決策浮出水面
+
+LangGraph 鼓勵把必須確定執行的邏輯寫成程式，讓模型專注於語意理解。
+
+<Accordion title="哪些邏輯應該寫成程式？">
+  - 工具結果為空時改查備用來源
+  - 重試次數超過上限時強制結束
+  - 高風險操作前暫停並等待批准
+  - 根據使用者權限決定可用工具
+
+  適合交給 LLM 的則包括意圖理解、非結構化資訊提取、工具選擇與自然語言整合。
+</Accordion>
+
+```python
+# Prompt 約束：脆弱
+system_prompt = "工具查詢為空時請改用其他關鍵字，最多重試三次。"
+
+# 程式控制：明確可測試
+def should_retry(state: AgentState) -> str:
+    if state["retry_count"] >= 3:
+        return "give_up"
+    if state["tool_results"].get("search") == []:
+        return "retry_with_fallback"
+    return "continue"
+```
+
+## State 設計：不只是對話歷史
+
+```python
+class EnterpriseAgentState(TypedDict):
+    messages: Annotated[list, operator.add]
+    user_id: str
+    permission_level: str
+    query_intent: str
+    tool_results: dict
+    retry_count: int
+    requires_approval: bool
+    audit_log: list
+```
+
+<Tip>
+  設計 State 時，將流程控制欄位（如 `retry_count`、`requires_approval`）與業務資料欄位（如 `query_intent`、`tool_results`）分開思考。
+</Tip>
+
+## 踩坑筆記：LangGraph 不是用來取代 Prompt
+
+<Note>
+  LangGraph 讓你把部分控制權從模型移回程式，但不是把所有邏輯都寫成 Node 和 Edge。好的分工是：模型負責理解與選擇，程式負責執行與守門。
+</Note>
 
 <Info>
   今天只要記住一件事：LangGraph 的價值，是把 Agent 的狀態與路徑從黑箱變成可管理的流程。
 </Info>
 
-下一篇，我們會看多個工具如何平行執行，降低等待時間。
+下一篇，我們會探討如何透過平行工具執行降低等待時間。
