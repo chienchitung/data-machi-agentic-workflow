@@ -2,7 +2,8 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "Data Machi",
-  "description": "從 RAG 到 Agentic Workflow：30 天打造 Data Machi 企業知識工作流。",
+  "description": "30 天學習系列，帶你從 RAG、Tool Use、Agent 到 LangGraph，逐步打造可在企業落地的 AI 知識工作流。",
+  "favicon": "/favicon.svg",
   "colors": {
     "primary": "#16A34A",
     "light": "#22C55E",
@@ -11,7 +12,11 @@
   "navigation": {
     "groups": [
       {
-        "group": "第一篇｜AI 不只要會回答，更要會工作",
+        "group": "開始閱讀",
+        "pages": ["index"]
+      },
+      {
+        "group": "第一篇｜AI 與工作",
         "pages": [
           "30-days/day-01-enterprise-ai-is-not-chatbot",
           "30-days/day-02-what-is-knowledge-work",
@@ -21,7 +26,7 @@
         ]
       },
       {
-        "group": "第二篇｜先讓 AI 找得到公司的知識",
+        "group": "第二篇｜企業知識檢索",
         "pages": [
           "30-days/day-06-what-is-rag",
           "30-days/day-07-pdf-to-searchable-knowledge",
@@ -31,7 +36,7 @@
         ]
       },
       {
-        "group": "第三篇｜讓 AI 不只會讀，還會使用工具",
+        "group": "第三篇｜工具整合",
         "pages": [
           "30-days/day-11-rag-vs-tool-use",
           "30-days/day-12-what-langchain-solves",
@@ -41,7 +46,7 @@
         ]
       },
       {
-        "group": "第四篇｜從工具呼叫進化成 Agent",
+        "group": "第四篇｜Agent 決策",
         "pages": [
           "30-days/day-16-when-tools-become-agent",
           "30-days/day-17-react-loop",
@@ -51,7 +56,7 @@
         ]
       },
       {
-        "group": "第五篇｜從黑箱 Agent 走向可控工作流",
+        "group": "第五篇｜可控工作流",
         "pages": [
           "30-days/day-21-why-agentexecutor-is-not-enough",
           "30-days/day-22-what-is-langgraph",
@@ -61,7 +66,7 @@
         ]
       },
       {
-        "group": "第六篇｜從 Demo 走向企業級 AI 產品",
+        "group": "第六篇｜企業級產品",
         "pages": [
           "30-days/day-26-timeout-retry-fallback",
           "30-days/day-27-agent-ux",
