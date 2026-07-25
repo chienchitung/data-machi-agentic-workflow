@@ -1,0 +1,29 @@
+---
+title: "Day 11｜RAG 和 Tool Use 差在哪裡？"
+sidebarTitle: "Day 11｜RAG vs Tool Use"
+description: "區分查知識與操作外部系統兩種能力。"
+---
+
+RAG 與 Tool Use 常被放在一起談，但兩者解決的問題不同。
+
+RAG 的重點是「把相關知識找回來」。Tool Use 的重點則是「讓模型呼叫一個外部能力」。這個能力可以是查詢 Google Sheets、讀取 Trello 卡片、搜尋 Confluence，也可以是寄信、建立任務或執行計算。
+
+## 用公司情境理解
+
+查詢「報表中的 Active Customer 定義」適合使用文件搜尋；查詢「2026 年每月 Active Customer 數量」則需要讀取資料表並計算。前者在找知識，後者在執行資料操作。
+
+## Tool 的基本結構
+
+每個 Tool 通常包含名稱、用途說明、輸入參數與回傳結果。模型不直接操作底層 API，而是選擇適合的 Tool，再由程式執行。
+
+Data Machi 將 Google Sheets、Trello、Confluence 與 PDF 搜尋包裝成不同工具。這讓模型可以用相對一致的方式選擇能力，而不必理解每個 API 的細節。
+
+## 踩坑筆記
+
+Tool 的說明文字非常重要。描述太模糊，模型容易選錯；工具太多且功能重疊，也會增加判斷難度。好的 Tool 應該有清楚邊界與可預期的回傳格式。
+
+<Info>
+  今天只要記住一件事：RAG 是一種檢索能力，而 Tool Use 是讓 AI 接上外部世界的方法。
+</Info>
+
+下一篇，我們會介紹 LangChain 在模型與工具之間扮演的角色。
