@@ -1,4 +1,4 @@
-# Data Machi Docs
+# 《從 RAG 到 Agentic Workflow：30 天打造 Data Machi 企業知識工作流》
 
 從 RAG、Tool Use、Agent 到 LangGraph，30 天逐步建立企業知識工作流的學習系列。
 
