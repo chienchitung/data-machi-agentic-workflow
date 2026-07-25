@@ -1,31 +1,125 @@
 ---
-title: "Day 18｜Coordinator 就像專案經理：AI 如何分派任務？"
+title: "Day 18｜Coordinator 就像 AI 專案經理：語意分類如何決定任務分派、資料沿用與重新查詢時機"
 sidebarTitle: "Day 18｜Coordinator 分派"
-description: "理解 Router、Coordinator 與領域工具的分工。"
+description: "理解 Router 與 Coordinator 在 Agent 架構中的分工差異。Router 只負責分類路由，Coordinator 則進一步整合對話前後文、觀察工具回傳結果、判斷是否沿用先前查詢或重新發起工具呼叫，最終整合出完整回答。"
 ---
 
-當一個系統接上愈來愈多工具，最大的問題不再是「能不能查」，而是「該查哪裡」。Coordinator 就像專案經理，先理解使用者需求，再把任務交給適合的專業能力。
+當一個 AI 系統接上愈來愈多工具，最大的挑戰不再是「能不能查」，而是「該查哪裡」，以及「這個問題是全新需求還是延續前文」。Coordinator 就像一位優秀的專案經理：它不親自執行所有工作，而是先理解需求全貌，再把對的任務分派給對的人，並在整個過程中保持對上下文的掌握。
 
-## Router 與 Coordinator 的差異
+## Router 與 Coordinator：有什麼不同？
 
-Router 通常只負責分類，例如判斷問題屬於 Analyst、Trello、Confluence 或 Document。Coordinator 除了分類，還會整合前後文、觀察工具結果、決定是否需要補查，最後產生回答。
+<CardGroup cols={2}>
+  <Card title="Router（路由器）" icon="route">
+    負責分類：判斷問題屬於哪個領域，再把請求轉發給對應處理器。Router 通常只做一次決策，不管理後續流程。
+  </Card>
 
-## Data Machi 的做法
+  <Card title="Coordinator（協調者）" icon="sitemap">
+    除了分類，還會整合前後文、觀察工具結果、決定是否補查其他工具、管理多輪工作流程，最後整合成完整回答。
+  </Card>
+</CardGroup>
 
-Data Machi 會先判斷最新訊息與前文的關係：它是獨立新問題、延續追問、改寫需求，還是明確要求重新查詢？這個判斷會影響是否沿用先前工具結果。
+<Info>
+  Router 像接待員，把訪客引導到對的部門；Coordinator 像專案經理，理解需求、協調多個部門並整合交付成果。
+</Info>
 
-例如「整理成表格」通常不需要重新查資料；「請重新確認最新數字」則必須再呼叫工具。這看似只是語意細節，卻直接影響速度、成本與正確性。
+## Coordinator 的核心判斷能力
 
-## Domain Hint 不是最終答案
+<Steps>
+  <Step title="判斷訊息性質">
+    這條訊息是全新問題、延續追問、改寫需求，還是明確要求重新查詢？
+  </Step>
+  <Step title="決定是否沿用資料">
+    若只是「整理成表格」或「換個說法」，可以沿用先前工具結果；若要求重新確認最新數字，則必須重新查詢。
+  </Step>
+  <Step title="選擇適合的工具或領域">
+    根據語意路由到 Analyst、Trello、Confluence 或 Document 等領域。
+  </Step>
+  <Step title="執行並整合結果">
+    觀察工具結果，決定是否補查，最後產生結構化回答。
+  </Step>
+</Steps>
 
-分類器提供的是建議方向，而非不可改變的決定。真正執行時仍需考慮工具是否可用、資料是否足夠與使用者是否需要釐清。
+## 語意判斷如何改變分派決策
 
-## 踩坑筆記
+```text
+使用者：「整理成表格」
+→ 延續前文，不需要重新查詢
+→ 沿用 Prior Tool Context
+→ 直接輸出表格
 
-不要只靠幾個關鍵字做路由。「報告」「分析」「資料」等詞出現在太多情境，容易把一般追問誤判成重新查詢。語意與對話關係往往比單一詞彙重要。
+使用者：「請重新確認最新數字」
+→ Verification Request
+→ 忽略先前工具結果
+→ 重新呼叫原始資料工具
+→ 比較新舊結果並回報差異
+```
+
+## Data Machi 的分派架構
+
+```python
+def coordinator_node(state: AgentState) -> AgentState:
+    latest_message = state["messages"][-1]
+    conversation_history = state["messages"][:-1]
+    prior_tool_context = state.get("prior_tool_context", {})
+
+    message_type = classify_message_intent(
+        latest_message,
+        conversation_history
+    )
+
+    if message_type in ["followup", "reformulation", "format_only"]:
+        context = prior_tool_context
+    else:
+        context = {}
+
+    domain = classify_domain(latest_message)
+    return route_to_agent(domain, state, context)
+```
+
+可能的訊息類型包含：
+
+- `new_query`：全新問題，需要查詢
+- `followup`：延續追問，可沿用資料
+- `reformulation`：改寫需求，可沿用資料
+- `verification`：要求核對，必須重新查詢
+- `format_only`：只調整格式，不查詢
+
+## Domain Hint 是建議，不是命令
+
+<Note>
+  領域分類器提供的是方向建議，而不是不可改變的最終決定。即使初始分類不完全正確，Agent 仍可在觀察工具結果後修正方向。
+</Note>
+
+## 常見的分派陷阱
+
+<Accordion title="只靠關鍵字路由">
+  「報告」「分析」「資料」出現在太多情境中。只靠關鍵字容易把格式調整誤判成全新查詢。
+</Accordion>
+
+<Accordion title="忽略對話歷史">
+  每一條訊息都當成獨立問題，會造成大量重複查詢，也無法理解「這個」「剛才說的」等指稱。
+</Accordion>
+
+<Accordion title="過度分類">
+  真實問題常跨越多個領域，不應強迫每個問題只能屬於單一類別。
+</Accordion>
+
+<Accordion title="不記錄分派決策">
+  若沒有記錄每次分派理由，錯誤路由時會很難除錯與改善。
+</Accordion>
+
+<Warning>
+  避免把 Coordinator 設計成黑盒子。分派決策必須可觀測、可解釋、可調整。
+</Warning>
+
+## 好的 Coordinator 知道什麼時候不做事
+
+<Tip>
+  當使用者只是要求「換成英文」「以表格呈現」「簡短一點」，不需要重新呼叫任何資料工具。直接轉換既有結果即可大幅提升速度並降低成本。
+</Tip>
 
 <Info>
   今天只要記住一件事：好的 Coordinator 不只會分派工作，也知道什麼時候不需要重新工作。
 </Info>
 
-下一篇，我們會談 Agent 如何保留對話與工作記憶。
+下一篇，我們會深入探討 Agent 如何管理記憶。
