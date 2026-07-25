@@ -1,33 +1,133 @@
 ---
-title: "Day 19｜AI 如何記得我們剛剛談過什麼？"
+title: "Day 19｜Agent 如何記住對話？近期對話、摘要記憶與工具結果：多輪對話記憶的三種類型與設計原則"
 sidebarTitle: "Day 19｜Agent 記憶"
-description: "區分近期對話、摘要記憶與工具結果。"
+description: "區分近期對話、摘要記憶與工具結果三種記憶類型，理解 Agent 如何在有限的 Token 窗口中保留對當前任務最有價值的資訊。過多歷史對話會增加成本並干擾模型判斷，過少則無法處理代名詞與追問。"
 ---
 
-多輪對話中，Agent 不只要記得使用者說過什麼，也要分辨哪些內容仍然可信、哪些資料需要重新查詢。
+多輪對話中，Agent 面臨的挑戰不只是「記住」使用者說了什麼，更在於「判斷」哪些內容目前還有效、哪些已經過時需要更新。一個沒有記憶管理的 Agent，不是遺忘所有事情，就是把所有歷史通通塞進 context，反而造成模型被舊資訊干擾、成本膨脹與回應變慢。
 
-## 三種常見記憶
+## 三種常見的 Agent 記憶類型
 
-- **近期對話**：保留最近幾輪訊息，處理代名詞與追問。
-- **摘要記憶**：把較早內容壓縮，避免上下文無限成長。
-- **工具結果記憶**：保存先前查到的資料，供後續整理與比較。
+<CardGroup cols={3}>
+  <Card title="近期對話記憶" icon="comments">
+    保留最近幾輪完整訊息，讓 Agent 能處理代名詞、延續追問與理解當下脈絡。
+  </Card>
 
-Data Machi 會保留最近的可見對話，較早內容則整理成 Conversation Memory。工具查詢結果另外保存成 Prior Tool Context，避免只依賴模型上一輪的文字回答。
+  <Card title="摘要記憶" icon="compress">
+    把較早對話壓縮成重點摘要，保留關鍵事實與已確認條件，省略不重要細節。
+  </Card>
 
-## 為什麼不能全部保留？
+  <Card title="工具結果記憶" icon="database">
+    保存先前工具查詢的原始結果，供後續整理、比較與引用。具體數字不應只依賴模型摘要。
+  </Card>
+</CardGroup>
 
-對話愈長，Token 成本與誤解風險愈高。模型可能抓到很久以前的條件，忽略最新需求。因此記憶不是愈多愈好，而是要保留對當前任務真正有用的資訊。
+## Data Machi 的記憶架構
 
-## 何時應重新查？
+<Steps>
+  <Step title="近期對話（Recent Messages）">
+    保留最近幾輪完整對話，確保 Agent 能理解當前脈絡與短期追問。
+  </Step>
+  <Step title="對話記憶（Conversation Memory）">
+    較早內容被整理成摘要，保留重要需求、已確認條件與決策脈絡。
+  </Step>
+  <Step title="工具結果記憶（Prior Tool Context）">
+    每次工具查詢結果另外保存，確保數字、名稱與日期可追溯到原始資料，而不是模型二次詮釋。
+  </Step>
+</Steps>
 
-若使用者只是要求改寫、補充說明或轉成表格，可以沿用資料；若要求最新、全部、重新核對或新增篩選條件，就應重新呼叫工具。
+```python
+class AgentState(TypedDict):
+    messages: list[BaseMessage]
+    conversation_memory: str
+    prior_tool_context: dict
+    tool_context_valid: bool
+    tool_context_timestamp: str
+```
 
-## 踩坑筆記
+## 為什麼不能把所有內容都保留？
 
-模型生成的摘要不能完全取代原始 Tool Result。涉及數字與事實時，最好保留可追溯的工具上下文，避免摘要過程漏掉條件。
+<Accordion title="Token 成本持續增加">
+  每一輪都把完整歷史送入模型，成本會隨對話長度增加，長對話後期可能比第一輪貴很多。
+</Accordion>
+
+<Accordion title="舊資訊干擾當前判斷">
+  模型可能過度注意很久以前設定的條件，而忽略使用者最近已更新需求。
+</Accordion>
+
+<Accordion title="摘要過程有資訊損失">
+  摘要不可避免會損失細節，因此真正需要精確追溯的工具結果應獨立保存。
+</Accordion>
 
 <Info>
-  今天只要記住一件事：Agent 記憶的重點不是記住所有內容，而是知道哪些內容可以沿用、哪些必須更新。
+  記憶不是愈多愈好。近期對話保留脈絡，摘要記憶保留關鍵事實，工具結果記憶保留可追溯的資料來源。
 </Info>
 
-下一篇，我們會談企業 Agent 最重要的能力之一：不知道時要問，不確定時要查。
+## 何時沿用資料，何時重新查詢？
+
+```text
+可以沿用：
+- 幫我整理成表格
+- 換個說法解釋
+- 翻譯成英文
+- 只顯示前三名
+- 加上百分比
+
+必須重新查詢：
+- 請重新確認最新數字
+- 加上本週新增項目
+- 你確定這個數字是對的嗎？
+- 把篩選條件改成上個季度
+- 我剛更新試算表，重新查一次
+```
+
+<Note>
+  判斷關鍵在於：使用者是否改變了資料需求，還是只改變呈現方式。前者需要重新查詢，後者可以沿用既有結果。
+</Note>
+
+## 工具結果摘要的風險
+
+<Warning>
+  **不要只保留工具結果摘要。** 涉及數字、日期、人名與金額時，模型的二次詮釋可能失真。「約 150 萬」與原始值 `1,487,320` 有本質差異。
+</Warning>
+
+```python
+def update_tool_context(state: AgentState, tool_results: list) -> AgentState:
+    prior_context = {
+        "results": tool_results,
+        "timestamp": get_current_time(),
+        "tools_used": [r.tool_name for r in tool_results],
+        "query_params": state.get("last_query_params", {}),
+    }
+
+    return {
+        **state,
+        "prior_tool_context": prior_context,
+        "tool_context_valid": True
+    }
+```
+
+## 記憶老化：資料什麼時候會過期？
+
+<Tip>
+  對頻繁更新的資料來源，需要為工具結果設定保鮮期。30 分鐘前的銷售數字與 3 天前的數字，在使用上應有不同處理方式。
+</Tip>
+
+```python
+def is_tool_context_fresh(state: AgentState, max_age_minutes: int = 30) -> bool:
+    if not state.get("tool_context_valid"):
+        return False
+
+    timestamp = state.get("tool_context_timestamp")
+    if not timestamp:
+        return False
+
+    age = (datetime.now() - datetime.fromisoformat(timestamp)).total_seconds() / 60
+    return age <= max_age_minutes
+```
+
+<Info>
+  今天只要記住一件事：Agent 記憶的重點不是記住所有內容，而是知道哪些可以沿用、哪些必須更新。
+</Info>
+
+下一篇，我們會進入企業 Agent 最重要的能力之一：知道何時停下來問使用者，以及如何設計零幻覺架構。
