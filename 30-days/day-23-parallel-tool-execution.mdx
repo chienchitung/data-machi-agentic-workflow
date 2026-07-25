@@ -1,29 +1,157 @@
 ---
-title: "Day 23｜AI 可以同時查多個系統嗎？平行工具執行的價值"
+title: "Day 23｜平行工具執行的價值與應用場景"
 sidebarTitle: "Day 23｜平行工具執行"
-description: "理解平行工具呼叫如何降低複合查詢的等待時間。"
+description: "理解平行工具呼叫的運作原理，掌握哪些查詢可以平行、哪些必須保持順序，以及企業 AI 降低延遲的實用策略。"
 ---
 
-當一個問題需要查詢多個彼此獨立的資料來源時，逐一執行會讓等待時間累加。先等 Sheets，再等 Confluence，最後等 Trello，即使每個工具只花幾秒，整體體驗也可能變得很慢。
+想像一個場景：使用者問「這個季度 Q3 的客訴工單有多少件，對應的 SLA 定義是什麼，目前有哪些相關 Trello 卡片正在處理？」這個問題需要同時查詢工單系統、Confluence 文件庫與 Trello 看板三個完全獨立的資料來源。如果 Agent 按順序逐一執行，每個工具即使只花 2 秒，三個加起來就是 6 秒以上。但如果三個查詢同時發出，整體只需要等最慢的那一個。
+
+## 順序執行 vs. 平行執行
+
+```text
+【順序執行】
+[查工單 2s] → [查 Confluence 2s] → [查 Trello 2s]
+總耗時：約 6 秒
+
+【平行執行】
+[查工單 2s] ─┐
+[查 Confluence 2s] ─┼─ 同時發出
+[查 Trello 2s] ─┘
+總耗時：約 2 秒
+```
+
+平行執行的核心價值是：**讓彼此獨立的查詢同時進行，把累加等待變成並行等待。**
 
 ## 什麼情況可以平行？
 
-如果多個查詢彼此不依賴，例如同時取得工單統計與相關文件定義，就可以一起執行。若第二步需要第一步的結果，例如先找正式專案名稱再查 Trello，就必須保持順序。
+<CardGroup cols={2}>
+  <Card title="可以平行" icon="check">
+    - 同時查詢工單統計、文件定義與看板狀態
+    - 同時搜尋多個獨立知識庫
+    - 同時呼叫不互相依賴的外部 API
 
-## Data Machi 實戰
+    判斷標準：A 的結果不需要作為 B 的輸入。
+  </Card>
 
-當模型一次產生多個 Tool Call 時，Data Machi 會使用非同步方式平行執行，再把所有 ToolMessage 一起交回 Agent。前端也會顯示各工具目前正在查詢、完成或失敗的狀態。
+  <Card title="必須保持順序" icon="xmark">
+    - 先查正式專案代號，再用代號查 Trello
+    - 先取得 user ID，再用 ID 查工單
+    - 先建立資料，再更新關聯
 
-## 效能不只靠更快模型
+    判斷標準：B 的參數需要從 A 的結果取得。
+  </Card>
+</CardGroup>
 
-企業 AI 的延遲可能來自模型、API、資料量、網路與重複查詢。平行化、快取、限制資料範圍與重用既有結果，往往比單純換更快模型更有效。
+## 混合情況：部分平行、部分順序
+
+```text
+步驟 1：查詢使用者基本資料，取得 user_id 與 project_id
+          │
+          ▼
+步驟 2 ──┬── 用 user_id 查工單歷史
+          ├── 用 project_id 查 Trello
+          └── 查通用 SLA 文件
+                    │
+                    ▼
+步驟 3：彙整三個來源結果
+```
+
+在 LangGraph 中，這種結構可以透過 fan-out（一個節點拆成多個平行路徑）和 fan-in（多個路徑匯合到一個節點）實現。
+
+## Data Machi 的實作方式
+
+```python
+import asyncio
+from langchain_core.messages import ToolMessage
+
+async def action_node(state: AgentState):
+    tool_calls = state["messages"][-1].tool_calls
+
+    tasks = [
+        execute_tool_async(tool_call)
+        for tool_call in tool_calls
+    ]
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    tool_messages = []
+    for tool_call, result in zip(tool_calls, results):
+        if isinstance(result, Exception):
+            content = f"工具執行失敗：{str(result)}"
+        else:
+            content = str(result)
+
+        tool_messages.append(
+            ToolMessage(
+                content=content,
+                tool_call_id=tool_call["id"],
+                name=tool_call["name"]
+            )
+        )
+
+    return {"messages": tool_messages}
+```
+
+### 前端狀態顯示
+
+```text
+正在查詢工單系統...    完成（找到 47 筆）
+正在查詢 Confluence... 查詢中
+正在查詢 Trello...     完成（找到 3 張卡片）
+```
+
+這種透明度讓使用者知道每個來源的進度，也更容易發現哪個系統較慢或失敗。
+
+## 企業 AI 的延遲來源
+
+<Accordion title="五大延遲來源">
+  | 延遲來源 | 典型耗時 | 優化方向 |
+  | --- | --- | --- |
+  | LLM 推論 | 1–5 秒 | 使用更快模型、Streaming |
+  | 外部 API | 0.5–3 秒/個 | 平行執行、快取 |
+  | 資料傳輸 | 視資料量 | 限制欄位與筆數 |
+  | 重複查詢 | 累加 | 快取相同參數結果 |
+  | 網路延遲 | 50–500ms | 就近部署、CDN |
+</Accordion>
+
+## 快取策略
+
+```python
+class ToolResultCache:
+    def __init__(self, ttl_seconds: int = 300):
+        self._cache = {}
+        self._ttl = ttl_seconds
+
+    def get(self, key):
+        item = self._cache.get(key)
+        if not item:
+            return None
+        result, timestamp = item
+        if time.time() - timestamp < self._ttl:
+            return result
+        return None
+
+    def set(self, key, result):
+        self._cache[key] = (result, time.time())
+```
 
 ## 踩坑筆記
 
-不是所有工作都適合平行。若工具共享速率限制、會修改同一份資料，或存在明確先後依賴，盲目平行反而會造成錯誤。
+<Warning>
+  不是所有工具都適合無條件平行：
+
+  1. 多個工具共用同一 API 的速率限制
+  2. 多個工具同時修改同一份資料
+  3. 後一步需要前一步輸出
+  4. 需要原子性保證的事務操作
+</Warning>
+
+<Tip>
+  判斷工具是否能平行，可以問：「如果把這些工具呼叫的順序打亂，結果會不一樣嗎？」如果不會，通常就可以平行。
+</Tip>
 
 <Info>
   今天只要記住一件事：平行化的前提是任務彼此獨立，而不是所有工具一起呼叫。
 </Info>
 
-下一篇，我們會釐清一個常見迷思：多個工具是否就代表 Multi-Agent？
+下一篇，我們會釐清多工具架構與 Multi-Agent 的差異。
