@@ -1,0 +1,34 @@
+---
+title: "Day 24｜多個工具不等於 Multi-Agent：什麼時候才需要拆 Agent？"
+sidebarTitle: "Day 24｜不要為拆而拆"
+description: "區分單一 Agent 多工具與真正多 Agent 架構。"
+---
+
+只要系統裡有 Analyst、Trello、Confluence、Document 四種能力，就能稱為 Multi-Agent 嗎？不一定。
+
+如果這些能力只是四組 Tool，由同一個 Coordinator 選擇與呼叫，較精確的描述是「單一 Agent 加多個領域工具」。真正的 Multi-Agent 通常代表不同 Agent 擁有各自 Prompt、上下文、工具、權限或模型，並存在明確交接。
+
+## 什麼時候值得拆 Agent？
+
+- 單一 Agent 工具太多，經常選錯。
+- 不同領域需要隔離大量上下文。
+- 任務存在研究、審核、修正等明確角色交接。
+- 不同角色需要不同權限或模型。
+
+## Data Machi 的現況
+
+目前核心 Graph 是一個 Coordinator 在 Agent 與 Action 節點間循環，四個領域主要以工具形式存在。這並不削弱系統價值，反而讓架構更簡單、延遲更低。
+
+## 未來可能的拆法
+
+若未來需要讓 Analyst 產出分析、Reviewer 獨立查核，再由 Writer 整理報告，就適合拆成不同節點或 Agent。拆分應由真實需求驅動。
+
+## 踩坑筆記
+
+Multi-Agent 會增加模型呼叫、上下文傳遞、除錯與責任判斷成本。角色越多，不代表系統越成熟。
+
+<Info>
+  今天只要記住一件事：Agent 架構的好壞不看角色數量，而看分工是否真的降低複雜度與風險。
+</Info>
+
+下一篇，我們會談企業不能完全交給 AI 的高風險操作。
